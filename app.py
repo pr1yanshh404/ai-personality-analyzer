@@ -1,109 +1,95 @@
 import streamlit as st
-import pickle
 import pandas as pd
+import pickle
 from openai import OpenAI
+import matplotlib.pyplot as plt
+from database import *
 
-# ------------------ CONFIG ------------------
+# ---------------- INIT DB ----------------
+create_db()
+
+# ---------------- CONFIG ----------------
 st.set_page_config(page_title="AI Personality Analyzer", layout="centered")
 
-# ------------------ LOAD MODEL ------------------
+# ---------------- LOAD MODEL ----------------
 model = pickle.load(open("model.pkl", "rb"))
 
-# ------------------ OPENAI ------------------
-client = OpenAI()
+# ---------------- OPENAI ----------------
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
-# ------------------ CSS ------------------
-st.markdown("""
-<style>
-body {
-    background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
-}
-.title {
-    text-align:center;
-    font-size:42px;
-    font-weight:700;
-    color:#00e6ff;
-    margin-bottom:10px;
-}
-.subtitle {
-    text-align:center;
-    color:#ccc;
-    margin-bottom:30px;
-}
-.chat-box {
-    background:#1c1c1c;
-    padding:15px;
-    border-radius:10px;
-    margin-top:20px;
-}
-</style>
-""", unsafe_allow_html=True)
+# ---------------- SESSION ----------------
+if "user" not in st.session_state:
+    st.session_state.user = None
 
-# ------------------ HEADER ------------------
-st.markdown("<div class='title'>🧠 AI Personality Analyzer</div>", unsafe_allow_html=True)
-st.markdown("<div class='subtitle'>Predict personality using AI + lifestyle insights 🚀</div>", unsafe_allow_html=True)
+# ---------------- AUTH ----------------
+st.title("🔐 Login / Signup")
 
-# ------------------ INPUT ------------------
-social = st.slider("📱 Social Time (hours/day)", 0, 10)
-screen = st.slider("💻 Screen Time (hours/day)", 0, 12)
-sleep = st.slider("😴 Sleep (hours/day)", 0, 12)
-study = st.slider("📚 Study Hours", 0, 10)
+menu = ["Login", "Signup"]
+choice = st.selectbox("Select", menu)
 
-# ------------------ PREDICT ------------------
-if st.button("🚀 Predict Personality"):
+username = st.text_input("Username")
+password = st.text_input("Password", type="password")
 
-    input_data = pd.DataFrame([[social, screen, sleep, study]],
-                              columns=["social_time", "screen_time", "sleep_hours", "study_hours"])
+if choice == "Signup":
+    if st.button("Create Account"):
+        add_user(username, password)
+        st.success("Account created! Login now.")
 
-    result = model.predict(input_data)[0]
+elif choice == "Login":
+    if st.button("Login"):
+        user = login_user(username, password)
+        if user:
+            st.session_state.user = username
+            st.success("Logged in!")
+        else:
+            st.error("Invalid credentials")
 
-    if result == 0:
-        personality = "Introvert"
-    else:
-        personality = "Extrovert"
+# ---------------- MAIN APP ----------------
+if st.session_state.user:
 
-    st.success(f"🎯 Prediction: {personality}")
+    st.title("🧠 AI Personality Analyzer")
 
-    # ------------------ AI SUGGESTIONS ------------------
-    with st.spinner("🤖 Generating AI suggestions..."):
+    social = st.slider("Social Time", 0, 10)
+    screen = st.slider("Screen Time", 0, 12)
+    sleep = st.slider("Sleep", 0, 12)
+    study = st.slider("Study", 0, 10)
 
-        prompt = f"""
-        User personality is {personality}.
-        Social time: {social}
-        Screen time: {screen}
-        Sleep: {sleep}
-        Study: {study}
+    if st.button("Analyze"):
 
-        Give personalized self-improvement tips in short bullet points.
-        """
+        input_data = pd.DataFrame([[social, screen, sleep, study]],
+                                 columns=["social_time", "screen_time", "sleep_hours", "study_hours"])
 
+        result = model.predict(input_data)[0]
+        personality = "Extrovert 😎" if result == 1 else "Introvert 🧠"
+
+        st.success(f"Prediction: {personality}")
+
+        # Save to DB
+        save_history(st.session_state.user, social, screen, sleep, study, personality)
+
+        # Chart
+        fig, ax = plt.subplots()
+        ax.bar(["Social", "Screen", "Sleep", "Study"], [social, screen, sleep, study])
+        st.pyplot(fig)
+
+        # AI
+        prompt = f"Analyze lifestyle: {social},{screen},{sleep},{study}"
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}]
         )
+        st.write(response.choices[0].message.content)
 
-        ai_text = response.choices[0].message.content
+    # ---------------- HISTORY ----------------
+    st.subheader("📜 Your History")
+    history = get_history(st.session_state.user)
 
-    st.markdown("### 🤖 AI Suggestions")
-    st.write(ai_text)
+    if history:
+        df = pd.DataFrame(history, columns=["User","Social","Screen","Sleep","Study","Result"])
+        st.dataframe(df)
 
-# ------------------ CHATBOT ------------------
-st.markdown("## 💬 Ask AI about your personality")
+    if st.button("Logout"):
+        st.session_state.user = None
 
-user_input = st.text_input("Type your question...")
 
-if user_input:
-    with st.spinner("Thinking..."):
 
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "You are a personality coach AI."},
-                {"role": "user", "content": user_input}
-            ]
-        )
-
-        reply = response.choices[0].message.content
-
-    st.markdown("### 🤖 AI Reply")
-    st.write(reply)
